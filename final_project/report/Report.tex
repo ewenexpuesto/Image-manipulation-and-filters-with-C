@@ -1,0 +1,129 @@
+\documentclass[a4paper,12pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{amsmath}
+\usepackage{verbatim}
+\usepackage{geometry}
+\geometry{margin=2cm}
+
+\title{Rapport de Projet Programmation Impérative}
+\author{Ewen Expuesto}
+\date{2024-2025}
+
+\begin{document}
+\maketitle
+\newpage
+\tableofcontents
+\newpage
+
+\section{Contexte et Sujet du Projet}
+L'objectif de ce projet est d’implémenter divers traitements sur des images en niveaux de gris ou en couleur. Mon programme permet notamment de :
+\begin{itemize}
+    \item \textbf{Lire} des fichiers images au format Portable Pixmap, spécifiquement le format PPM binaire pour les images en couleur, et PGM binaire pour les images en niveaux de gris.
+    \item \textbf{Séparer} et mélanger les composantes d'images.
+    \item \textbf{Éclaircir} et fondre des images.
+    \item Utiliser des \textbf{Look Up Tables} pour inverser les couleurs d'une image, normaliser une image ou réduire son nombre de niveaux de pixels.
+    \item Réaliser des \textbf{opérations arithmétiques} sur les images.
+    \item \textbf{Ré-échantillonner} des images.
+\end{itemize}
+Ce document suit linéairement le sujet. Chaque titre de section précise le nom du fichier du programme évoqué.
+
+\newpage
+
+\section{Choix Techniques et Problèmes Rencontrés}
+
+\subsection{Choix des types de variables \texttt{pictures.[h/c]}}
+Pour représenter les pixels, j'ai choisi le type \texttt{unsigned char}, permettant de limiter les valeurs des pixels entre 0 et 255. 
+
+\subsection{Lecture des images \texttt{read\_write.[h/c]}}
+J'ai d'abord adapté le programme du cours à la structure de données \texttt{picture}. Concertnant le lecture des méta-données, pour déterminer à quel moment il fallait sauter les commentaires et lire la ligne à l'aide de \texttt{fgets(buffer, 128, f);}, j'ai utilisé \texttt{printf} abondamment. Après cela, les tests de méta-données (format, taille...) fonctionnaient.
+
+J'ai décidé de retourner une image vide si l'image donnée en paramètre est mal lue, après avoir écrit le module qui permet de créer des images vides. J'ai aussi ordonné les tests dans l'ordre qui me semblait le plus logique (voir programme).
+
+J'ai rencontré des difficultés avec la position du curseur : le programme suivant compare la taille prévue dans les méta-données avec la taille effective en parcourant tout le fichier (sauf le header) et comptant le nombre de bytes. Cela déplace le curseur à la fin du fichier. Je ne m'en étais pas rendu compte donc quand je lisais une image, j'obtenais un fichier rempli d'espaces vides. C'est en lisant les fichiers binaires que j'ai compris qu'il fallait placer le curseur au bon endroit en ajoutant \texttt{fseek(f, current\_position, SEEK\_SET);} après le programme suivant :
+\begin{verbatim}
+    long current_position = ftell(f);
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    long remaining_size = file_size - current_position;
+\end{verbatim}
+
+\subsection{Écriture des images \texttt{read\_write.[h/c]}}
+D'abord, j'utilise \texttt{fprintf} pour écrire une entrée standard comme \texttt{P5} dans un fichier.
+
+Ensuite, c'est en résolvant la suite du sujet que je me suis rendu compte que ma fonction \texttt{write\_picture} ne fonctionnait pas correctement en testant. Il fallait distinguer les formats PGM et PPM en écrivant non pas sur \texttt{img.width * img.height}, mais plutôt sur \texttt{img.width * img.height * 3} pour les images couleur. Sinon, le programme s'arrêtait à un tiers du chemin et l'image était noire sur les deux derniers tiers inférieurs.  
+\texttt{fwrite(img.data, sizeof(byte), img.width * img.height * img.channels, f);}
+
+\subsection{Gestion des images \texttt{manage\_images.[h/c]}}
+J'ai rencontré un bug de la même origine que précédemment en tentant de convertir une image couleur en niveaux de gris, car j'avais oublié de différencier, de la même manière que pour \texttt{write\_picture}, les deux types d'images, mais cette fois-ci dans la fonction \texttt{read\_picture}. En effet, il faut différencier : \texttt{(byte *) malloc(width * height * sizeof(byte));}
+pour les fichiers PGM, et : \texttt{(byte *) malloc(width * height * 3 * sizeof(byte));}
+pour les fichiers PPM. De même que : \texttt{fread(data, sizeof(byte), width * height, f);}
+et : \texttt{fread(data, sizeof(byte), width * height * 3, f);}. Cela causait des erreurs de mémoire en testant avec des images.  
+
+De plus, j'ai perdu du temps à devoir bien construire le Makefile à ce niveau, sans l'avoir fait au fur et à mesure car les erreurs se cumulaient sur différentes fonctions.
+
+\subsection{Manipulation directe des valeurs des pixels \\ \texttt{handle\_pixels\_directly.[h/c]}}
+Pour la fonction d'éclaircissement \texttt{brighten\_picture}, j'ai décidé de limiter la valeur d'un pixel à \texttt{MAX\_BYTE} si la valeur éclaircie dépasse cette limite. Cela permet d'éviter les débordements et de maintenir les valeurs des pixels dans l'intervalle valide.
+
+Pour la fonction \texttt{melt\_picture}, j'ai utilisé une syntaxe utilisant \texttt{rand} trouvée sur Internet pour qu'on soit dans le domaine souhaité. Afin de trouver les bons indices des pixels à comparer, j'ai réalisé plusieurs essais avant de tomber sur la bonne formule.
+
+\subsection{Manipulation des pixels en utilisant une LUT (Look Up Table) \texttt{lut.[h/c]} et \texttt{pictures.[h/c]}}
+Il a fallu ne pas oublier d'utiliser la fonction \texttt{clean\_lut}.
+
+Pour la normalisation dans la fonction \texttt{normalize\_dynamic\_picture}, j'ai fait attention à ne pas diviser par 0.
+
+Pour \texttt{set\_levels\_pictures}, j'ai d'abord imaginé la formule de discrétisation \texttt{(int) (((((i / MAX\_BYTE) * nb\_levels))) * (MAX\_BYTE / (nb\_levels)))}. Mais en affichant les valeurs ainsi obtenues à l'aide de \texttt{printf}, j'ai remarqué qu'il fallait plutôt utiliser \texttt{(int) ((((int) (((float) i / MAX\_BYTE) * nb\_levels))) * (MAX\_BYTE / (nb\_levels)))} afin de profiter de la conversion implicite sans quoi on obtenait toujours 0. Enfin, pour que le résultat se situe entre 0 et 255, la formule obtenue au final est \texttt{(int) ((((int) (((float) i / MAX\_BYTE) * nb\_levels))) * (MAX\_BYTE / (nb\_levels -1)))}.
+
+\subsection{Opérations arithmétiques sur les images \texttt{image\_arithmetic.[h/c]}}
+Pour la fonction \texttt{mult\_picture}, j'ai décidé de multiplier les pixels de mêmes coordonnées entre eux pour former l'image finale \texttt{p\_mult.data[i] = (int) ((p1.data[i] * p2.data[i]) / MAX\_BYTE);}. Ainsi l'image résultante est une multiplication simple, mais comme ses pixels se répartissent pour la plupart autour de la moyenne de 127, l'image est "plate". De plus, j'ai remarqué après coup en construisant le programme principal qu'on voulait aussi pouvoir multiplier une image PPM avec une PGM. Pour cela, il fallait distinguer alors trois cas. On fait comme si l'image PGM était une image couleur avec trois fois la même valeur pour chaque pixel. J'aurais pu réutiliser la fonction \texttt{convert\_to\_color\_picture}, mais pour des raisons de lisibilité des instructions, j'ai adapté son code directement dans la fonction \texttt{mult\_picture}.
+
+Pour \texttt{mix\_picture}, il faut pouvoir accepter tout type d'image en entrée (PPM ou PGM). Donc l'image résultante est une image qui a pour channel le maximum des channels des trois images d'entrée. Après avoir créé une telle image, j'ai converti les images d'entrée en images de PPM si une d'entre elles l'est. Ensuite, j'ai appliqué la formule donnée dans le sujet.
+
+\subsection{Re-échantillonnage d'images \texttt{image\_resample.[h/c]}}
+Je traduis les fonctions données dans le sujet. De même que précédemment, c'est en testant et en affichant que j'ai remarqué que pour calculer les facteurs de redimensionnement, il fallait écrire \texttt{double factor = (double) p.width / width;} et non \texttt{image.width / width;} pour utiliser la division réelle et non entière.
+
+\subsection{Programme principal \texttt{main.c}}
+
+Pour obtenir \texttt{Lenna\_gray\_dynamic.pgm}, j'ai utilisé la fonction de normalisation. De manière similaire, pour obtenir \texttt{Lenna\_color\_dynamic.pgm}, j'ai appliqué la fonction split, la normalisation puis merge le tout.
+
+L'exécution du \texttt{main.c} m'a permis de détecter plusieurs erreurs : 
+\begin{itemize}
+    \item Oubli de \texttt{* channels} dans la boucle for de \texttt{brighten}, c'est l'utilisation d'images en couleurs qui m'a permis de le détecter. En effet, seulement un tiers de l'image était éclairci auparavant.
+    \item Dans \texttt{set\_levels\_picture}, je déclarais par erreur \texttt{lut l = create\_lut{nb\_levels};} au lieu de \texttt{lut l = create\_lut(MAX\_BYTE);}.
+    \item Pour les fonctions \texttt{melt\_picture} et aussi \texttt{brighten\_picture}, je me suis rendu compte qu'il fallait copier l'image car sinon on modifiait directement par référence la valeur vers laquelle pointe le pointeur data, donc l'image de départ. J'ai ensuite rencontré le même problème avec les fonctions utilisant \texttt{apply\_lut}. Ainsi, j'ai modifié \texttt{apply\_lut} directement. Puis de même pour \texttt{set\_levels\_picture}.
+    \item J'avais oublié plusieurs tests \texttt{is\_empty\_picture}.
+\end{itemize}
+
+\newpage
+
+\section{Conclusion et Limites}
+\begin{itemize}
+    \item Le programme ne prend en charge que les formats PPM et PGM. Une extension pour d'autres formats aurait pu être implémentée.
+    \item Les valeurs des pixels sont limitées à l'intervalle [0, 255], ce qui limite la précision pour certaines applications.
+    \item Certaines fonctions, comme \texttt{split}, ne fonctionnent qu'avec trois composantes et ne gèrent pas par exemple la transparence.
+    \item La fonction \texttt{resample\_picture\_nearest} ne fonctionne que pour des images carrées.
+\end{itemize}
+
+\newpage
+\appendix
+\section*{Annexe : Manuel d'utilisation de l'exécutable}
+Pour exécuter le programme, compiler le programme puis lancer l'exécutable avec les options suivantes :
+\begin{enumerate}
+    \item \texttt{-h, ---help} : Afficher un message d'aide
+    \item \texttt{---conversion} : Traiter la conversion d'image
+    \item \texttt{---split} : Traiter la séparation d'image
+    \item \texttt{---brighten} : Traiter l'éclaircissement d'image
+    \item \texttt{---melt} : Traiter la fusion d'image
+    \item \texttt{---inverse} : Traiter l'inversion d'image
+    \item \texttt{---dynamic} : Traiter la normalisation dynamique d'image
+    \item \texttt{---levels} : Traiter les niveaux d'image
+    \item \texttt{---resample} : Traiter le ré-échantillonnage d'image
+    \item \texttt{---difference} : Traiter la différence d'image
+    \item \texttt{---product} : Traiter le produit d'image
+    \item \texttt{---mixture} : Traiter le mélange d'image
+    \item \texttt{---all} : Traiter toutes les images
+\end{enumerate}
+
+\end{document}
